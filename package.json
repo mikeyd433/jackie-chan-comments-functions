@@ -1,0 +1,14 @@
+{
+  "name": "jackie-chan-fan-club",
+  "version": "1.0.0",
+  "description": "Jackie Chan Fan Club website with comments functionality",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "mongodb": "^5.0.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^15.0.0"
+  }
+}
