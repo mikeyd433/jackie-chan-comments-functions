@@ -1,41 +1,12 @@
-const { MongoClient } = require('mongodb');
+const { createClient } = require('@supabase/supabase-js');
 
-// MongoDB connection URI from environment variable
-const uri = process.env.MONGODB_URI;
-const dbName = 'jackie_chan_club';
-
-// Connection pooling - reuse the client between function invocations
-let cachedClient = null;
-let cachedDb = null;
-
-async function connectToDatabase() {
-  // If we already have a connection, use it
-  if (cachedClient && cachedDb) {
-    return { client: cachedClient, db: cachedDb };
-  }
-
-  // If no connection, create a new one
-  const client = new MongoClient(uri, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000, // 5 second timeout
-    connectTimeoutMS: 5000 // 5 second timeout
-  });
-
-  await client.connect();
-  const db = client.db(dbName);
-  
-  // Cache the client and db connection
-  cachedClient = client;
-  cachedDb = db;
-  
-  return { client, db };
-}
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 exports.handler = async function(event, context) {
-  // Tell Netlify not to close the connection immediately
-  context.callbackWaitsForEmptyEventLoop = false;
-  
   // Set CORS headers for browser requests
   const headers = {
     'Access-Control-Allow-Origin': 'https://jackiechanfan.club',
@@ -108,25 +79,26 @@ exports.handler = async function(event, context) {
   }
 
   try {
-    // Connect to MongoDB using our connection function
-    const { db } = await connectToDatabase();
-    const commentsCollection = db.collection('comments');
+    // Insert comment into Supabase
+    const { data: comment, error } = await supabase
+      .from('comments')
+      .insert([
+        {
+          movie_id: data.movie_id,
+          name: data.name,
+          email: data.email,
+          comment: data.comment,
+          approved: true
+        }
+      ])
+      .select();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      throw error;
+    }
     
-    console.log('Connected to MongoDB successfully');
-    
-    // Prepare comment document
-    const comment = {
-      movie_id: data.movie_id,
-      name: data.name,
-      email: data.email,
-      comment: data.comment,
-      date: new Date(),
-      approved: true // Auto-approve comments for now, change to false if you want moderation
-    };
-    
-    // Insert comment into database
-    await commentsCollection.insertOne(comment);
-    console.log('Comment inserted successfully');
+    console.log('Comment inserted successfully:', comment);
     
     return {
       statusCode: 200,
@@ -134,7 +106,7 @@ exports.handler = async function(event, context) {
       body: JSON.stringify({ success: true, message: 'Comment submitted successfully' })
     };
   } catch (error) {
-    console.error('Detailed error saving comment:', error);
+    console.error('Error saving comment:', error);
     
     return {
       statusCode: 500,
@@ -142,8 +114,7 @@ exports.handler = async function(event, context) {
       body: JSON.stringify({ 
         success: false, 
         message: 'Error saving comment',
-        error: error.message,
-        stack: error.stack
+        error: error.message
       })
     };
   }
