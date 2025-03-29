@@ -4,12 +4,44 @@ const { MongoClient } = require('mongodb');
 const uri = process.env.MONGODB_URI;
 const dbName = 'jackie_chan_club';
 
+// Connection pooling - reuse the client between function invocations
+let cachedClient = null;
+let cachedDb = null;
+
+async function connectToDatabase() {
+  // If we already have a connection, use it
+  if (cachedClient && cachedDb) {
+    return { client: cachedClient, db: cachedDb };
+  }
+
+  // If no connection, create a new one
+  const client = new MongoClient(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000, // 5 second timeout
+    connectTimeoutMS: 5000 // 5 second timeout
+  });
+
+  await client.connect();
+  const db = client.db(dbName);
+  
+  // Cache the client and db connection
+  cachedClient = client;
+  cachedDb = db;
+  
+  return { client, db };
+}
+
 exports.handler = async function(event, context) {
+  // Tell Netlify not to close the connection immediately
+  context.callbackWaitsForEmptyEventLoop = false;
+  
   // Set CORS headers for browser requests
   const headers = {
     'Access-Control-Allow-Origin': 'https://jackiechanfan.club',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Content-Type': 'application/json'
   };
 
   // Handle preflight OPTIONS request
@@ -30,11 +62,15 @@ exports.handler = async function(event, context) {
     };
   }
 
+  console.log('Received comment submission');
+  
   // Parse the request body
   let data;
   try {
     data = JSON.parse(event.body);
+    console.log('Parsed request body:', JSON.stringify(data));
   } catch (error) {
+    console.error('JSON parsing error:', error);
     return {
       statusCode: 400,
       headers,
@@ -44,6 +80,7 @@ exports.handler = async function(event, context) {
 
   // Validate required fields
   if (!data.movie_id || !data.name || !data.email || !data.comment) {
+    console.error('Missing required fields:', data);
     return {
       statusCode: 400,
       headers,
@@ -70,14 +107,12 @@ exports.handler = async function(event, context) {
     };
   }
 
-  let client;
   try {
-    // Connect to MongoDB
-    client = new MongoClient(uri);
-    await client.connect();
+    // Connect to MongoDB using our connection function
+    const { db } = await connectToDatabase();
+    const commentsCollection = db.collection('comments');
     
-    const database = client.db(dbName);
-    const commentsCollection = database.collection('comments');
+    console.log('Connected to MongoDB successfully');
     
     // Prepare comment document
     const comment = {
@@ -91,6 +126,7 @@ exports.handler = async function(event, context) {
     
     // Insert comment into database
     await commentsCollection.insertOne(comment);
+    console.log('Comment inserted successfully');
     
     return {
       statusCode: 200,
@@ -98,15 +134,17 @@ exports.handler = async function(event, context) {
       body: JSON.stringify({ success: true, message: 'Comment submitted successfully' })
     };
   } catch (error) {
-    console.error('Error saving comment:', error);
+    console.error('Detailed error saving comment:', error);
     
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ success: false, message: 'Error saving comment' })
+      body: JSON.stringify({ 
+        success: false, 
+        message: 'Error saving comment',
+        error: error.message,
+        stack: error.stack
+      })
     };
-  } finally {
-    // Close the MongoDB connection
-    if (client) await client.close();
   }
 };
