@@ -4,12 +4,44 @@ const { MongoClient } = require('mongodb');
 const uri = process.env.MONGODB_URI;
 const dbName = 'jackie_chan_club';
 
+// Connection pooling - reuse the client between function invocations
+let cachedClient = null;
+let cachedDb = null;
+
+async function connectToDatabase() {
+  // If we already have a connection, use it
+  if (cachedClient && cachedDb) {
+    return { client: cachedClient, db: cachedDb };
+  }
+
+  // If no connection, create a new one
+  const client = new MongoClient(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000, // 5 second timeout
+    connectTimeoutMS: 5000 // 5 second timeout
+  });
+
+  await client.connect();
+  const db = client.db(dbName);
+  
+  // Cache the client and db connection
+  cachedClient = client;
+  cachedDb = db;
+  
+  return { client, db };
+}
+
 exports.handler = async function(event, context) {
+  // Tell Netlify not to close the connection immediately
+  context.callbackWaitsForEmptyEventLoop = false;
+  
   // Set CORS headers for browser requests
   const headers = {
     'Access-Control-Allow-Origin': 'https://jackiechanfan.club',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Content-Type': 'application/json'
   };
 
   // Handle preflight OPTIONS request
@@ -32,14 +64,12 @@ exports.handler = async function(event, context) {
     };
   }
 
-  let client;
   try {
-    // Connect to MongoDB
-    client = new MongoClient(uri);
-    await client.connect();
+    // Connect to MongoDB using our connection function
+    const { db } = await connectToDatabase();
+    const commentsCollection = db.collection('comments');
     
-    const database = client.db(dbName);
-    const commentsCollection = database.collection('comments');
+    console.log(`Getting comments for movie: ${movieId}`);
     
     // Query for approved comments for this movie
     const comments = await commentsCollection
@@ -47,21 +77,24 @@ exports.handler = async function(event, context) {
       .sort({ date: -1 })
       .toArray();
     
+    console.log(`Found ${comments.length} comments`);
+    
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify(comments)
     };
   } catch (error) {
-    console.error('Error retrieving comments:', error);
+    console.error('Detailed error retrieving comments:', error);
     
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Error retrieving comments' })
+      body: JSON.stringify({ 
+        error: 'Error retrieving comments',
+        message: error.message,
+        stack: error.stack
+      })
     };
-  } finally {
-    // Close the MongoDB connection
-    if (client) await client.close();
   }
 };
