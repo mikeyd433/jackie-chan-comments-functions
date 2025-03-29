@@ -1,41 +1,12 @@
-const { MongoClient } = require('mongodb');
+const { createClient } = require('@supabase/supabase-js');
 
-// MongoDB connection URI from environment variable
-const uri = process.env.MONGODB_URI;
-const dbName = 'jackie_chan_club';
-
-// Connection pooling - reuse the client between function invocations
-let cachedClient = null;
-let cachedDb = null;
-
-async function connectToDatabase() {
-  // If we already have a connection, use it
-  if (cachedClient && cachedDb) {
-    return { client: cachedClient, db: cachedDb };
-  }
-
-  // If no connection, create a new one
-  const client = new MongoClient(uri, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 5000, // 5 second timeout
-    connectTimeoutMS: 5000 // 5 second timeout
-  });
-
-  await client.connect();
-  const db = client.db(dbName);
-  
-  // Cache the client and db connection
-  cachedClient = client;
-  cachedDb = db;
-  
-  return { client, db };
-}
+// Initialize Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 exports.handler = async function(event, context) {
-  // Tell Netlify not to close the connection immediately
-  context.callbackWaitsForEmptyEventLoop = false;
-  
   // Set CORS headers for browser requests
   const headers = {
     'Access-Control-Allow-Origin': 'https://jackiechanfan.club',
@@ -65,35 +36,37 @@ exports.handler = async function(event, context) {
   }
 
   try {
-    // Connect to MongoDB using our connection function
-    const { db } = await connectToDatabase();
-    const commentsCollection = db.collection('comments');
-    
     console.log(`Getting comments for movie: ${movieId}`);
     
-    // Query for approved comments for this movie
-    const comments = await commentsCollection
-      .find({ movie_id: movieId, approved: true })
-      .sort({ date: -1 })
-      .toArray();
+    // Query Supabase for comments for this movie ID
+    const { data: comments, error } = await supabase
+      .from('comments')
+      .select('*')
+      .eq('movie_id', movieId)
+      .eq('approved', true)
+      .order('date', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error:', error);
+      throw error;
+    }
     
-    console.log(`Found ${comments.length} comments`);
+    console.log(`Found ${comments ? comments.length : 0} comments`);
     
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify(comments)
+      body: JSON.stringify(comments || [])
     };
   } catch (error) {
-    console.error('Detailed error retrieving comments:', error);
+    console.error('Error retrieving comments:', error);
     
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({ 
         error: 'Error retrieving comments',
-        message: error.message,
-        stack: error.stack
+        message: error.message
       })
     };
   }
